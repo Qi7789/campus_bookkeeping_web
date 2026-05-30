@@ -15,7 +15,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     initUIValues();
 
-    // 先加载全量数据，保证配额计算准确
     fetch('/api/records/all_raw')
         .then(res => res.json())
         .then(records => {
@@ -120,15 +119,20 @@ function injectMoneyToWish() {
             note: `存入【${wishGoalName}】心愿储蓄`
         })
     })
-    .then(res => res.json())
-    .then(data => {
-        if (data.status === 'success') {
-            loadRecords();
-            refreshWishPoolDisplay();
-            alert(`成功从钱包总资产转出 ￥${val} 存入心愿储蓄！`);
-        }
-    })
-    .catch(err => console.error("储蓄投币失败:", err));
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'success') {
+                fetch('/api/records/all_raw')
+                    .then(res => res.json())
+                    .then(records => {
+                        globalRawRecords = records;
+                        loadRecords();
+                        refreshWishPoolDisplay();
+                        alert(`成功从钱包总资产转出 ￥${val} 存入心愿储蓄！`);
+                    });
+            }
+        })
+        .catch(err => console.error("储蓄投币失败:", err));
 }
 
 function refreshWishPoolDisplay() {
@@ -177,42 +181,50 @@ function changePeriod(buttonElement) {
     loadRecords();
 }
 
-// ====================== 核心修复：剩余配额永远只算本月 ======================
+// ── 核心渲染：钱包 / 配额 / 明细 ────────────────────────────────────────
 function loadRecords() {
     const keyword = document.getElementById('keywordFilter').value;
 
     fetch(`/api/records?period=${currentPeriod}&keyword=${encodeURIComponent(keyword)}`)
         .then(res => res.json())
         .then(data => {
-            // 1. 固定计算【本月】支出，不受筛选影响
             const now = new Date();
             const thisMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-            const thisMonthNonSavingExpense = (globalRawRecords || []).filter(r =>
+            // ── 钱包总资产 = 所有收入 - 所有支出（含储蓄）──────────────
+            // 直接使用 API 返回的 balance（全量计算，不受筛选影响）
+            const rawIncome  = globalRawRecords.filter(r => r.type === '收入')
+                .reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+            const rawExpense = globalRawRecords.filter(r => r.type === '支出')
+                .reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+            walletTotalBalance = rawIncome - rawExpense;
+
+            // ── 本月剩余可用配额 ──────────────────────────────────────
+            // 逻辑：预算上限（从钱包划出）- 本月实际支出（不含储蓄，储蓄走钱包直扣）
+            const thisMonthExpense = globalRawRecords.filter(r =>
                 r.date && r.date.startsWith(thisMonthStr) &&
                 r.type === '支出' &&
                 r.category !== '储蓄'
-            ).reduce((sum, r) => sum + parseFloat(r.amount || 0), 0);
+            ).reduce((s, r) => s + parseFloat(r.amount || 0), 0);
 
-            // 2. 计算剩余配额（永远不变）
-            monthlyRemainQuota = globalBudgetLimit - thisMonthNonSavingExpense;
+            monthlyRemainQuota = globalBudgetLimit - thisMonthExpense;
 
-            // 3. 页面渲染
-            walletTotalBalance = data.balance;
+            // ── 渲染数字 ──────────────────────────────────────────────
             document.getElementById('wallet-total-balance').innerText = walletTotalBalance.toFixed(2);
-            document.getElementById('total-income').innerText = `￥${data.total_income.toFixed(2)}`;
+            document.getElementById('total-income').innerText  = `￥${data.total_income.toFixed(2)}`;
             document.getElementById('total-expense').innerText = `￥${data.total_expense.toFixed(2)}`;
-            document.getElementById('balance').innerText = `￥${data.monthly_net_balance.toFixed(2)}`;
+            document.getElementById('balance').innerText       = `￥${data.monthly_net_balance.toFixed(2)}`;
             document.getElementById('remaining-budget').innerText = monthlyRemainQuota.toFixed(2);
 
-            let percent = (thisMonthNonSavingExpense / globalBudgetLimit) * 100;
-            document.getElementById('budget-progress-fill').style.width = `${percent > 100 ? 100 : percent}%`;
+            let percent = (thisMonthExpense / globalBudgetLimit) * 100;
+            document.getElementById('budget-progress-fill').style.width = `${Math.min(percent, 100)}%`;
             document.getElementById('budget-warn').style.display = monthlyRemainQuota < 0 ? 'block' : 'none';
 
             renderSurvivalCard(monthlyRemainQuota);
             refreshWishPoolDisplay();
             loadGlobalAnalysisData();
 
+            // ── 明细流水表格（倒序） ──────────────────────────────────
             const tbody = document.getElementById('records-tbody');
             tbody.innerHTML = '';
             if (data.records.length === 0) {
@@ -220,23 +232,34 @@ function loadRecords() {
                 return;
             }
 
-            data.records.forEach(r => {
+            data.records.slice().reverse().forEach(r => {
                 const tr = document.createElement('tr');
-                const amtSign = r.type === '支出' ? '-' : '+';
+                const amtSign  = r.type === '支出' ? '-' : '+';
                 const amtColor = r.type === '支出' ? 'var(--morandi-pink)' : 'var(--morandi-green)';
                 tr.innerHTML = `
                     <td>${r.date.substring(5)}</td>
                     <td><span class="badge-cozy-cat">${r.category}</span></td>
-                    <td style="color: ${amtColor}; font-weight:600;">${amtSign}${parseFloat(r.amount).toFixed(2)}</td>
+                    <td style="color:${amtColor}; font-weight:600;">${amtSign}${parseFloat(r.amount).toFixed(2)}</td>
                     <td style="color:#8e9492;">${escapeHtml(r.note) || '-'}</td>
                     <td class="action-cell">
-                        <button class="btn-action-edit" onclick="openCozyModal('${r.id}', '${r.amount}', '${r.note}')">修改</button>
+                        <button class="btn-action-edit" onclick="openCozyModal('${r.id}','${r.amount}','${escapeHtml(r.note)}')">修改</button>
                         <button class="btn-action-del" onclick="openDeleteModal('${r.id}')">删除</button>
                     </td>
                 `;
                 tbody.appendChild(tr);
             });
-        }).catch(err => console.error("加载数据出错:", err));
+        })
+        .catch(err => console.error("加载数据出错:", err));
+}
+
+// 刷新全量数据后再渲染（提交/删除/编辑后调用）
+function reloadAll() {
+    fetch('/api/records/all_raw')
+        .then(res => res.json())
+        .then(records => {
+            globalRawRecords = records;
+            loadRecords();
+        });
 }
 
 function renderSurvivalCard(remainingBudget) {
@@ -274,7 +297,7 @@ function loadGlobalAnalysisData() {
             initMonthSelector();
             const selector = document.getElementById('month-selector');
             const selectedMonth = selector ? selector.value : 'all';
-            renderCategoryDiagnostic(selectedMonth); // 数据加载完再渲染饼图
+            renderCategoryDiagnostic(selectedMonth);
             renderDynamicMonthlyChart(records);
         })
         .catch(err => console.error("加载分析数据出错:", err));
@@ -345,13 +368,13 @@ function renderCategoryDiagnostic(selectedMonth) {
         let percent = ((catAmt / totalExpense) * 100).toFixed(1);
         let color = morandiColors[index % morandiColors.length];
         const rowHtml = `
-            <div class="progress-row" style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px;">
-                <div class="progress-info" style="display: flex; justify-content: space-between; font-size: 12px;">
-                    <span><strong>${catName}</strong> <span style="color: var(--text-muted);">￥${catAmt.toFixed(2)}</span></span>
-                    <span style="font-weight: 600; color: ${color};">${percent}%</span>
+            <div class="progress-row" style="display:flex; flex-direction:column; gap:4px; margin-bottom:12px;">
+                <div class="progress-info" style="display:flex; justify-content:space-between; font-size:12px;">
+                    <span><strong>${catName}</strong> <span style="color:var(--text-muted);">￥${catAmt.toFixed(2)}</span></span>
+                    <span style="font-weight:600; color:${color};">${percent}%</span>
                 </div>
-                <div class="progress-bar-bg" style="width: 100%; height: 8px; background-color: #f0ede4; border-radius: 4px; overflow: hidden;">
-                    <div class="progress-bar-fill" style="width: ${percent}%; height: 100%; background-color: ${color}; border-radius: 4px;"></div>
+                <div class="progress-bar-bg" style="width:100%; height:8px; background-color:#f0ede4; border-radius:4px; overflow:hidden;">
+                    <div class="progress-bar-fill" style="width:${percent}%; height:100%; background-color:${color}; border-radius:4px;"></div>
                 </div>
             </div>
         `;
@@ -392,7 +415,6 @@ function drawPieChart(svgEl, categories, colors, total) {
 
     const cx = 80, cy = 80, outerR = 60, innerR = 36;
 
-    // 解析 CSS 变量为实际颜色
     const colorResolved = (() => {
         const style = getComputedStyle(document.documentElement);
         return {
@@ -404,7 +426,6 @@ function drawPieChart(svgEl, categories, colors, total) {
     })();
     const resolveColor = c => colorResolved[c] || c;
 
-    // SVG defs：发光滤镜
     const defs = document.createElementNS(NS, 'defs');
     defs.innerHTML = `
         <filter id="pie-glow" x="-30%" y="-30%" width="160%" height="160%">
@@ -413,7 +434,6 @@ function drawPieChart(svgEl, categories, colors, total) {
         </filter>`;
     svgEl.appendChild(defs);
 
-    // 中心标签（会在 hover 时动态更新）
     const mkText = (content, y, size, weight, fill) => {
         const t = document.createElementNS(NS, 'text');
         t.setAttribute('x', cx); t.setAttribute('y', y);
@@ -425,13 +445,11 @@ function drawPieChart(svgEl, categories, colors, total) {
     const tLabel = mkText('消费占比', cy - 10, '10', '500', '#8e9492');
     const tAmt   = mkText(`￥${total.toFixed(0)}`, cy + 10, '12', 'bold', '#4a4e4d');
 
-    // 极坐标转笛卡尔
     const polar = (angleDeg, r) => {
         const rad = (angleDeg - 90) * Math.PI / 180;
         return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
     };
 
-    // 构建扇形 path（楔形，用于实心饼图 + 环形打孔）
     const wedgePath = (startDeg, endDeg) => {
         const s1 = polar(startDeg, outerR), e1 = polar(endDeg, outerR);
         const s2 = polar(endDeg, innerR),  e2 = polar(startDeg, innerR);
@@ -445,7 +463,7 @@ function drawPieChart(svgEl, categories, colors, total) {
         ].join(' ');
     };
 
-    const gap = categories.length > 1 ? 1.5 : 0; // 扇区间隙（度）
+    const gap = categories.length > 1 ? 1.5 : 0;
     let startDeg = 0;
     const slices = [];
 
@@ -463,12 +481,9 @@ function drawPieChart(svgEl, categories, colors, total) {
         path.style.transformOrigin = `${cx}px ${cy}px`;
 
         path.addEventListener('mouseenter', () => {
-            // 放大当前扇区 + 发光
             path.style.transform = 'scale(1.06)';
             path.setAttribute('filter', 'url(#pie-glow)');
-            // 其余扇区变淡
             slices.forEach(s => { if (s !== path) s.style.opacity = '0.3'; });
-            // 中心显示该分类
             const pct = ((catAmt / total) * 100).toFixed(1);
             tLabel.textContent = `${catName} ${pct}%`;
             tLabel.setAttribute('fill', color);
@@ -489,7 +504,6 @@ function drawPieChart(svgEl, categories, colors, total) {
         startDeg += spanDeg;
     });
 
-    // 中心标签层叠在扇区上方
     svgEl.appendChild(tLabel);
     svgEl.appendChild(tAmt);
 }
@@ -508,7 +522,7 @@ function renderDynamicMonthlyChart(records) {
 
     let sortedMonths = Object.keys(monthlyData).sort();
     if (sortedMonths.length === 0) {
-        container.innerHTML = '<div style="width:100%; text-align:center; color:var(--text-muted); font-size:12px; margin-bottom: 20px;">还没有历史数据积淀哦</div>';
+        container.innerHTML = '<div style="width:100%; text-align:center; color:var(--text-muted); font-size:12px; margin-bottom:20px;">还没有历史数据积淀哦</div>';
         return;
     }
     sortedMonths = sortedMonths.slice(-5);
@@ -523,9 +537,9 @@ function renderDynamicMonthlyChart(records) {
         col.className = `monthly-col ${isLatest ? 'is-current' : ''}`;
         col.innerHTML = `
             <div class="monthly-track" data-hint="${mName}支出: ￥${amt.toFixed(2)}">
-                <div class="monthly-bar-fill" style="height: ${Math.max(heightPercentage, amt > 0 ? 5 : 0)}%; background-color: ${isLatest ? 'var(--morandi-green)' : '#c3cbd6'};"></div>
+                <div class="monthly-bar-fill" style="height:${Math.max(heightPercentage, amt > 0 ? 5 : 0)}%; background-color:${isLatest ? 'var(--morandi-green)' : '#c3cbd6'};"></div>
             </div>
-            <span class="monthly-date-label" style="font-weight: ${isLatest ? '600' : '400'};">${mName}</span>
+            <span class="monthly-date-label" style="font-weight:${isLatest ? '600' : '400'};">${mName}</span>
         `;
         container.appendChild(col);
     });
@@ -543,14 +557,14 @@ function submitRecord() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ date, type, category, amount, note })
     })
-    .then(res => res.json())
-    .then(data => {
-        if (data.status === 'success') {
-            document.getElementById('amount').value = '';
-            document.getElementById('note').value = '';
-            loadRecords();
-        }
-    });
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'success') {
+                document.getElementById('amount').value = '';
+                document.getElementById('note').value = '';
+                reloadAll();
+            }
+        });
 }
 
 function openCozyModal(id, amt, note) {
@@ -560,6 +574,7 @@ function openCozyModal(id, amt, note) {
     document.getElementById('cozyModalOverlay').classList.add('active');
 }
 function closeCozyModal() { document.getElementById('cozyModalOverlay').classList.remove('active'); }
+
 function submitCozyEdit() {
     const id = document.getElementById('edit-record-id').value;
     const amount = document.getElementById('edit-amount').value;
@@ -568,20 +583,30 @@ function submitCozyEdit() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, amount, note })
-    }).then(() => { closeCozyModal(); loadRecords(); });
+    })
+        .then(() => {
+            closeCozyModal();
+            reloadAll();
+        });
 }
+
 function openDeleteModal(id) {
     document.getElementById('delete-record-id').value = id;
     document.getElementById('cozyDeleteOverlay').classList.add('active');
 }
 function closeDeleteModal() { document.getElementById('cozyDeleteOverlay').classList.remove('active'); }
+
 function submitCozyDelete() {
     const id = document.getElementById('delete-record-id').value;
     fetch(`/api/records/delete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id })
-    }).then(() => { closeDeleteModal(); loadRecords(); });
+    })
+        .then(() => {
+            closeDeleteModal();
+            reloadAll();
+        });
 }
 
 let canvas, ctx, particles = [];
