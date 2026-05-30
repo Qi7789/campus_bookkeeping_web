@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌿 CampusWallet | 交互式智能账本</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<canvas id="fireworksCanvas" class="fireworks-canvas"></canvas>
+
+<div class="app-container">
+    <header class="app-header">
+        <div class="brand">
+            <span class="brand-icon">🍃</span>
+            <h1>CampusWallet</h1>
+            <span class="badge-tag">交互式智能账本</span>
+        </div>
+        <div class="user-greeting">今天也过得很有温度呢，同学</div>
+    </header>
+
+    <section class="main-stats-card">
+        <div class="stats-header-row">
+            <div class="stats-primary">
+                <span class="stats-label">👛 钱包总资产余额</span>
+                <h2 class="stats-amount">￥<span id="wallet-total-balance">0.00</span></h2>
+            </div>
+            <div class="stats-primary">
+                <span class="stats-label">⏳ 本月剩余可用配额</span>
+                <h2 class="stats-amount" style="color: var(--text-dark);">￥<span id="remaining-budget">0.00</span></h2>
+            </div>
+        </div>
+
+        <div class="stats-divider"></div>
+
+        <div class="stats-secondary">
+            <div class="stat-node">
+                <span class="node-label">当月总支出</span>
+                <span id="total-expense" class="node-value text-expense">￥0.00</span>
+            </div>
+            <div class="stat-node">
+                <span class="node-label">当月总收入</span>
+                <span id="total-income" class="text-income">￥0.00</span>
+            </div>
+            <div class="stat-node">
+                <span class="node-label">本月净结余</span>
+                <span id="balance" class="node-value text-balance">￥0.00</span>
+            </div>
+        </div>
+
+        <div class="progress-container">
+            <div class="progress-bar"><div id="budget-progress-fill" class="progress-fill"></div></div>
+            <div class="budget-setting-inline">
+                <span class="progress-text">本月预算上限：￥<span id="budget-limit-label">2000.00</span></span>
+                <div class="inline-input-group">
+                    <input type="number" id="input-budget-limit" placeholder="修改月预算" min="0" step="100">
+                    <button type="button" onclick="updateBudgetLimit()" class="btn-inline-apply">确定</button>
+                </div>
+                <button type="button" onclick="autoCarryOverSurplus()" class="btn-inline-apply" style="margin-left:10px">月末结余转入钱包</button>
+            </div>
+        </div>
+
+        <div id="budget-warn" class="soft-warn-banner" style="display: none;">
+            💡 提醒：本月开销已超过您设定的预算红线，接下来的日子要稍微清淡一点点啦。
+        </div>
+    </section>
+
+    <div class="app-grid">
+        <div class="grid-column-left">
+            <div class="cozy-card survival-card">
+                <h3 class="card-title">🍱 生活费发放倒计时</h3>
+                <div class="survival-flex">
+                    <div class="survival-days">
+                        <span class="survival-num" id="survival-days-count">0</span>
+                        <span class="survival-unit">天后发生活费</span>
+                    </div>
+                    <div class="survival-status">
+                        <div class="survival-daily">日均可用: <strong id="survival-daily-budget">￥0.00</strong></div>
+                        <div class="survival-tag" id="survival-status-tag">🌿 计算中...</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cozy-card">
+                <h3 class="card-title">📝 记一笔生活明细</h3>
+                <form id="recordForm" class="cozy-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>记录日期</label>
+                            <input type="date" id="date" required>
+                        </div>
+                        <div class="form-group">
+                            <label>收支类型</label>
+                            <select id="type" required>
+                                <option value="支出">🌿 支出</option>
+                                <option value="收入">☀️ 收入</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>账单分类</label>
+                            <select id="category" required>
+                                <option value="餐饮">🍔 餐饮</option>
+                                <option value="购物">🛍️ 购物</option>
+                                <option value="生活费">💰 生活费</option>
+                                <option value="交通">🚌 交通</option>
+                                <option value="转账">💸 转账</option>
+                                <option value="水电">⚡ 水电</option>
+                                <option value="储蓄">🏦 储蓄</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>金额 (元)</label>
+                            <input type="number" id="amount" step="0.01" min="0.01" placeholder="0.00" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>明细备注 <span class="tag-opt">(选填)</span></label>
+                        <textarea id="note" placeholder="写点什么记录这一刻吧..."></textarea>
+                    </div>
+                    <button type="submit" class="btn-cozy">存入生活账本</button>
+                </form>
+            </div>
+
+            <div class="cozy-card wish-pool-card" id="wishPoolCard">
+                <h3 class="card-title">✨ 储蓄许愿池 (Flag 目标)</h3>
+                <div class="wish-setup-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>心愿名称</label>
+                            <input type="text" id="wish-name-input" placeholder="例: 毕业旅行" value="毕业旅行储备基金">
+                        </div>
+                        <div class="form-group">
+                            <label>所需金额 (元)</label>
+                            <input type="number" id="wish-cost-input" placeholder="例: 2000" value="2000" min="1">
+                        </div>
+                    </div>
+                    <button type="button" onclick="saveWishGoal()" class="btn-cozy btn-wish-save">更新心愿目标</button>
+                </div>
+
+                <div class="wish-display-zone" style="margin-top: 15px; border-top: 1px dashed #efece6; padding-top: 15px;">
+                    <div class="wish-meta">
+                        <span class="wish-name" id="wish-name-label">🗺️ 毕业旅行储备基金</span>
+                        <span class="wish-target">目标: ￥<span id="wish-cost-label">2000.00</span></span>
+                    </div>
+                    <div class="progress-bar" style="margin-bottom: 12px;"><div id="wish-progress-fill" class="progress-fill wish-fill"></div></div>
+
+                    <div class="wish-inject-control" id="wishInjectControl">
+                        <input type="number" id="wish-inject-amount" placeholder="从小金库塞入钱(元)" min="1" step="10">
+                        <button type="button" onclick="injectMoneyToWish()" class="btn-inject-apply">投币储蓄 🪙</button>
+                    </div>
+
+                    <div id="wish-success-zone" style="display: none; text-align: center; margin-top: 10px;">
+                        <button type="button" onclick="harvestWish()" class="btn-harvest-wish">🎉 拔草成功！收归功勋墙</button>
+                    </div>
+                </div>
+
+                <div class="history-wall" style="margin-top: 18px; border-top: 1px solid #f0ede6; padding-top: 12px;">
+                    <span style="font-size: 11px; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 6px;">🏆 已实现的愿望功勋墙</span>
+                    <div id="history-wishes-badges" class="badges-flex-row"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid-column-right">
+            <div class="cozy-card">
+                <div class="analysis-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <h3 class="card-title" style="margin: 0;">📊 消费结构诊断</h3>
+                    <div class="month-toggle-group">
+                        <select id="month-selector" class="month-select-dropdown" onchange="renderCategoryDiagnostic(this.value)">
+                            <option value="all">全部月份</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="category-diagnostic-wrapper" style="display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
+                    <div class="pie-chart-container" style="width: 160px; height: 160px; flex-shrink: 0; position: relative;">
+                        <svg id="categoryPieChart" width="160" height="160" viewBox="0 0 160 160" style="overflow:visible;display:block;"></svg>
+                    </div>
+                    <div id="category-progress-bars" class="category-progress-container" style="flex: 1; min-width: 200px;"></div>
+                </div>
+            </div>
+
+            <div class="cozy-card">
+                <h3 class="card-title">📅 月度消费趋势对比 <span style="font-size: 11px; font-weight: normal; color: var(--text-muted); margin-left: 6px;">(动态数据抓取)</span></h3>
+                <div class="monthly-chart-wrapper">
+                    <div class="monthly-bars-container" id="monthly-bars-dom"></div>
+                </div>
+            </div>
+
+            <div class="cozy-card">
+                <div class="card-header-vertical">
+                    <h3 class="card-title" style="margin-bottom: 12px;">🔍 历史明细流水</h3>
+                    <div class="filter-capsule-row">
+                        <button type="button" class="capsule-btn active" data-period="all" onclick="changePeriod(this)">全部</button>
+                        <button type="button" class="capsule-btn" data-period="month" onclick="changePeriod(this)">本月</button>
+                        <button type="button" class="capsule-btn" data-period="week" onclick="changePeriod(this)">本周</button>
+                        <button type="button" class="capsule-btn" data-period="day" onclick="changePeriod(this)">今日</button>
+                        <input type="text" id="keywordFilter" placeholder="搜索备注..." oninput="loadRecords()" class="inline-search-input">
+                    </div>
+                </div>
+                <div class="table-scroller" style="margin-top: 10px;">
+                    <table class="cozy-table">
+                        <thead>
+                        <tr>
+                            <th>日期</th>
+                            <th>分类</th>
+                            <th>金额</th>
+                            <th>备注</th>
+                            <th style="text-align: center; width: 100px;">操作</th>
+                        </tr>
+                        </thead>
+                        <tbody id="records-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="cozyModalOverlay" class="cozy-modal-overlay">
+    <div class="cozy-modal-card">
+        <div class="modal-header">
+            <span class="modal-icon">✏️</span>
+            <h4>校正账目明细</h4>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="edit-record-id">
+            <div class="modal-form-group"><label>金额 (元)</label><input type="number" id="edit-amount" step="0.01"></div>
+            <div class="modal-form-group" style="margin-top: 12px;"><label>明细备注</label><input type="text" id="edit-note"></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn-modal-cancel" onclick="closeCozyModal()">放手取消</button>
+            <button type="button" class="btn-modal-confirm" onclick="submitCozyEdit()">确认修正</button>
+        </div>
+    </div>
+</div>
+
+<div id="cozyDeleteOverlay" class="cozy-modal-overlay">
+    <div class="cozy-modal-card delete-card">
+        <div class="modal-header"><span class="modal-icon" style="background-color:#faf0e8; color:#ba8b72;">🗑️</span><h4>抹去这笔账单？</h4></div>
+        <p class="delete-warning-text">确定要永远从生活手账本中抹去这一项日常开销记录吗？此操作无法被撤销还原。</p>
+        <input type="hidden" id="delete-record-id">
+        <div class="modal-footer" style="margin-top: 20px;">
+            <button type="button" class="btn-modal-cancel" onclick="closeDeleteModal()">留下它</button>
+            <button type="button" class="btn-modal-confirm btn-del-confirm" onclick="submitCozyDelete()">确认抹去</button>
+        </div>
+    </div>
+</div>
+
+<script src="/static/script.js"></script>
+</body>
+</html>
