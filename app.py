@@ -7,7 +7,10 @@ from collections import defaultdict
 
 app = Flask(__name__)
 
-CSV_PATH = 'data/records.csv'
+import os
+# 以 app.py 所在目录为基准，永远指向正确的 data/records.csv
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CSV_PATH = os.path.join(BASE_DIR, 'data', 'records.csv')
 
 
 def read_records():
@@ -188,6 +191,6 @@ def api_edit_record():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-
 if __name__ == '__main__':
-    app.run(port=8080, debug=True)
+    app.run(host='0.0.0.0', port=8080, debug=False)
+
